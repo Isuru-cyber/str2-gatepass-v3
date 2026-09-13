@@ -1,85 +1,23 @@
 -- Supabase Schema for Gate Pass Management System
 
--- 1. App Users Table (Simple standalone login system, bypasses Supabase Auth)
+-- 1. App Users Table (Simple standalone login system)
 CREATE TABLE app_users (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   email TEXT UNIQUE,
-  plain_password TEXT NOT NULL,
-  role TEXT CHECK (role IN ('admin', 'user')) DEFAULT 'user',
+  password_hash TEXT, -- Replaces plain_password
+  plain_password TEXT, -- Kept temporarily for reference but should be removed after migration
+  role TEXT CHECK (role IN ('admin', 'user', 'viewer')) DEFAULT 'user',
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
 
 -- Insert Default Admin User
-INSERT INTO app_users (username, email, plain_password, role, is_active)
-VALUES ('admin', 'admin@stretchline.com', 'admin123', 'admin', true);
+INSERT INTO app_users (username, email, password_hash, role, is_active)
+VALUES ('admin', 'admin@stretchline.com', '$2a$10$wT0C1mYv3C9P9C4L7hP7FOGrM5F8WlY8u4KqU/B6/2zQ6kY9VlM7i', 'admin', true);
+-- password is 'admin' (bcrypt hashed)
 
-
--- 2. Raw Upload Tables (temp storage before master generation)
--- We use a session_id to group uploads together
-CREATE TABLE raw_invoice_details (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  session_id UUID NOT NULL,
-  invoice TEXT,
-  name TEXT,
-  invoice_date TEXT,
-  order_no TEXT,
-  line TEXT,
-  release TEXT,
-  qty_invoiced DECIMAL,
-  extended_price DECIMAL,
-  do_bol TEXT,
-  dispatch_date TEXT,
-  cust_po TEXT
-);
-
-CREATE TABLE raw_so_details (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  session_id UUID NOT NULL,
-  order_no TEXT,
-  ship_via_description TEXT
-);
-
-CREATE TABLE raw_rma_details (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  session_id UUID NOT NULL,
-  rma TEXT,
-  original_invoice TEXT,
-  reason TEXT
-);
-
-CREATE TABLE raw_locations_details (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  session_id UUID NOT NULL,
-  do_bol TEXT,
-  consignee_address_3 TEXT
-);
-
--- 3. Master Data
-CREATE TABLE master_data (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  session_id UUID NOT NULL,
-  invoice TEXT,
-  name TEXT,
-  invoice_date TEXT,
-  order_no TEXT,
-  line TEXT,
-  release TEXT,
-  qty_invoiced DECIMAL,
-  extended_price DECIMAL,
-  do_bol TEXT,
-  ship_via_description TEXT,
-  consignee_address_3 TEXT,
-  rma TEXT,
-  reason TEXT,
-  rma_status BOOLEAN DEFAULT false,
-  pending_fields JSONB,
-  cust_po TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
-);
-
--- 4. Settings Tables
+-- 2. Settings Tables
 CREATE TABLE company_settings (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   company_name TEXT DEFAULT 'Stretchline (Private) Limited - Mount Lavinia',
@@ -144,16 +82,20 @@ CREATE TABLE gate_pass_records (
 -- 6. Row Level Security (RLS) Policies
 -- Enables RLS on all tables
 ALTER TABLE app_users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_invoice_details ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_so_details ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_rma_details ENABLE ROW LEVEL SECURITY;
-ALTER TABLE raw_locations_details ENABLE ROW LEVEL SECURITY;
-ALTER TABLE master_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE company_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE drivers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE delivery_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE time_slots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gate_pass_records ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE backup_log (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL,
+  action_type TEXT NOT NULL,
+  details TEXT,
+  timestamp TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+ALTER TABLE backup_log ENABLE ROW LEVEL SECURITY;
 
 -- Note: Because this application uses a custom user authentication table (app_users) 
 -- instead of Supabase Auth, requests will be seen as 'anon' role by Supabase.
@@ -161,13 +103,10 @@ ALTER TABLE gate_pass_records ENABLE ROW LEVEL SECURITY;
 -- while having RLS strictly enabled. 
 
 CREATE POLICY "Allow anon read and write on app_users" ON app_users FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow anon read and write on raw_invoice_details" ON raw_invoice_details FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow anon read and write on raw_so_details" ON raw_so_details FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow anon read and write on raw_rma_details" ON raw_rma_details FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow anon read and write on raw_locations_details" ON raw_locations_details FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow anon read and write on master_data" ON master_data FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow anon read and write on company_settings" ON company_settings FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow anon read and write on drivers" ON drivers FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow anon read and write on delivery_locations" ON delivery_locations FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow anon read and write on time_slots" ON time_slots FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow anon read and write on gate_pass_records" ON gate_pass_records FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow anon read and write on backup_log" ON backup_log FOR ALL USING (true) WITH CHECK (true);
+

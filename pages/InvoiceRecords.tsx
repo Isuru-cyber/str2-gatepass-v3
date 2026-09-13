@@ -25,6 +25,10 @@ export default function InvoiceRecords() {
   const [sortField, setSortField] = useState<keyof MasterDataRow | "status">("invoice");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const pageSize = 100;
+  
   // Dialog states for gate pass creation warnings
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [warningMessage, setWarningMessage] = useState("");
@@ -257,6 +261,13 @@ export default function InvoiceRecords() {
     });
   }, [data, searchTerm, postedFilter, sortField, sortDirection]);
 
+  const paginatedData = useMemo(() => {
+    const from = (page - 1) * pageSize;
+    return filteredData.slice(from, from + pageSize);
+  }, [filteredData, page, pageSize]);
+
+  const totalPages = Math.ceil(filteredData.length / pageSize);
+
   const handleToggleInvoice = (invoice: string, customerName: string, gatePassIssued: string | null | undefined, hasRmaWarning: boolean) => {
     if (selectedInvoices.includes(invoice)) {
       setSelectedInvoices(prev => prev.filter(inv => inv !== invoice));
@@ -352,7 +363,7 @@ export default function InvoiceRecords() {
         <div className="flex-1 min-w-[200px] max-w-sm">
           <SearchBar 
             value={searchTerm} 
-            onChange={setSearchTerm} 
+            onChange={(val) => { setSearchTerm(val); setPage(1); }} 
             placeholder="Search invoice, customer, order, do..." 
           />
         </div>
@@ -360,7 +371,7 @@ export default function InvoiceRecords() {
           <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Status:</span>
           <select
             value={postedFilter}
-            onChange={(e) => setPostedFilter(e.target.value)}
+            onChange={(e) => { setPostedFilter(e.target.value); setPage(1); }}
             className="h-9 rounded-md border border-input bg-background/80 dark:bg-slate-950 px-2 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
           >
             <option value="all">All Status</option>
@@ -531,7 +542,7 @@ export default function InvoiceRecords() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredData.map((row) => {
+                paginatedData.map((row) => {
                   const isSelected = selectedInvoices.includes(row.invoice);
                   const isIssued = !!row.gate_pass_issued;
                   return (
@@ -582,6 +593,32 @@ export default function InvoiceRecords() {
             </TableBody>
           </Table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-2 py-2">
+          <div className="text-sm text-muted-foreground">
+            Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, filteredData.length)} of {filteredData.length} entries
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Dialog open={showWarningModal} onOpenChange={setShowWarningModal}>
         <DialogContent>

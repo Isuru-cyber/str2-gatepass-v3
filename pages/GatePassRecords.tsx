@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Search, Loader2, Printer, Eye, Trash2, Edit, Download, CheckCircle, AlertTriangle, Truck } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { format, isToday, isThisWeek, isThisMonth, isWithinInterval, startOfDay, endOfDay } from "date-fns";
+import { format, isToday, isThisWeek, isThisMonth, isWithinInterval, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import { useReactToPrint } from "react-to-print";
 import { CompanySettings } from "@/types";
 import * as XLSX from "xlsx";
@@ -19,10 +19,15 @@ import { EditGatePassModal } from "@/components/EditGatePassModal";
 export default function GatePassRecords() {
   const { profile } = useAuth();
   const [data, setData] = useState<GatePassRecord[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortField, setSortField] = useState<keyof GatePassRecord>("gate_pass_no");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const pageSize = 100;
 
   const handleSort = (field: keyof GatePassRecord) => {
     if (sortField === field) {
@@ -63,14 +68,63 @@ export default function GatePassRecords() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [{ data: records, error }, { data: settings }] = await Promise.all([
-        supabase.from('gate_pass_records').select('*').order('created_at', { ascending: false }),
+      let query = supabase.from('gate_pass_records').select('*', { count: 'exact' });
+
+      // Apply search term
+      if (searchTerm) {
+        const term = `%${searchTerm}%`;
+        query = query.or(`gate_pass_no.ilike.${term},customer_name.ilike.${term},vehicle_number.ilike.${term},date.ilike.${term}`);
+      }
+
+      // Apply status filter
+      if (completedFilter !== "all") {
+        if (completedFilter === "completed") query = query.eq('status', 'completed');
+        if (completedFilter === "not-completed") query = query.neq('status', 'completed');
+        if (completedFilter === "pending") query = query.or('status.eq.pending,status.is.null'); // Assumes null/missing means pending
+        if (completedFilter === "dispatched") query = query.eq('status', 'dispatched');
+      }
+
+      // Apply date filter
+      if (dateFilter !== "all") {
+        const today = new Date();
+        if (dateFilter === "today") {
+          query = query.gte('created_at', startOfDay(today).toISOString()).lte('created_at', endOfDay(today).toISOString());
+        } else if (dateFilter === "this-week") {
+          const startOfCurrentWeek = startOfWeek(today, { weekStartsOn: 1 });
+          const endOfCurrentWeek = endOfWeek(today, { weekStartsOn: 1 });
+          query = query.gte('created_at', startOfDay(startOfCurrentWeek).toISOString()).lte('created_at', endOfDay(endOfCurrentWeek).toISOString());
+        } else if (dateFilter === "this-month") {
+          const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+          const endMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+          query = query.gte('created_at', startOfDay(startMonth).toISOString()).lte('created_at', endOfDay(endMonth).toISOString());
+        } else if (dateFilter === "custom") {
+          if (customStartDate) query = query.gte('created_at', startOfDay(new Date(customStartDate)).toISOString());
+          if (customEndDate) query = query.lte('created_at', endOfDay(new Date(customEndDate)).toISOString());
+        }
+      }
+
+      // Apply sorting
+      if (sortField) {
+         // Some fields might require client-side sorting if they are JSON, but standard columns work here
+         query = query.order(sortField, { ascending: sortDirection === 'asc' });
+      } else {
+         query = query.order('created_at', { ascending: false });
+      }
+
+      // Apply Pagination
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      query = query.range(from, to);
+
+      const [{ data: records, error, count }, { data: settings }] = await Promise.all([
+        query,
         supabase.from('company_settings').select('*').limit(1).single()
       ]);
 
       if (error) throw error;
       
       setData(records as GatePassRecord[]);
+      setTotalCount(count || 0);
       if (settings) setCompanySettings(settings);
     } catch (err: any) {
       toast.error(`Error loading records: ${err.message}`);
@@ -81,6 +135,9 @@ export default function GatePassRecords() {
 
   useEffect(() => {
     fetchData();
+  }, [page, searchTerm, dateFilter, customStartDate, customEndDate, completedFilter, sortField, sortDirection]);
+
+  useEffect(() => {
     const savedSig = localStorage.getItem('gate_pass_signature');
     if (savedSig) {
       setSignature(savedSig);
@@ -156,80 +213,9 @@ export default function GatePassRecords() {
     XLSX.writeFile(workbook, `Gate_Pass_Records_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
   };
 
-  const filteredData = useMemo(() => {
-    const filtered = data.filter(row => {
-      let matchesSearch = true;
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        matchesSearch = (
-          row.gate_pass_no.toLowerCase().includes(term) ||
-          row.customer_name.toLowerCase().includes(term) ||
-          row.vehicle_number.toLowerCase().includes(term) ||
-          row.date.includes(term)
-        );
-      }
-      
-      if (!matchesSearch) return false;
+  const filteredData = data;
 
-      if (completedFilter !== "all") {
-        const s = row.status || 'pending';
-        if (completedFilter === "completed" && s !== 'completed') return false;
-        if (completedFilter === "not-completed" && s === 'completed') return false;
-        if (completedFilter === "pending" && (s === 'completed' || s === 'dispatched')) return false;
-        if (completedFilter === "dispatched" && s !== 'dispatched') return false;
-      }
-
-      if (dateFilter === "all") return true;
-
-      const rowDate = new Date(row.created_at);
-      
-      if (dateFilter === "today") {
-        return isToday(rowDate);
-      } else if (dateFilter === "this-week") {
-        return isThisWeek(rowDate, { weekStartsOn: 1 });
-      } else if (dateFilter === "this-month") {
-        return isThisMonth(rowDate);
-      } else if (dateFilter === "custom") {
-        if (customStartDate && customEndDate) {
-           const start = startOfDay(new Date(customStartDate));
-           const end = endOfDay(new Date(customEndDate));
-           return isWithinInterval(rowDate, { start, end });
-        } else if (customStartDate) {
-           const start = startOfDay(new Date(customStartDate));
-           return rowDate >= start;
-        } else if (customEndDate) {
-           const end = endOfDay(new Date(customEndDate));
-           return rowDate <= end;
-        }
-      }
-
-      return true;
-    });
-
-    if (!sortField) return filtered;
-
-    return [...filtered].sort((a, b) => {
-      let aVal: any = a[sortField];
-      let bVal: any = b[sortField];
-
-      if (sortField === 'date') {
-        const aDate = new Date(`${a.date} ${a.time}`).getTime();
-        const bDate = new Date(`${b.date} ${b.time}`).getTime();
-        aVal = isNaN(aDate) ? 0 : aDate;
-        bVal = isNaN(bDate) ? 0 : bDate;
-      } else if (sortField === 'total_mtrs' || sortField === 'total_value' || sortField === 'total_cartons') {
-        aVal = Number(aVal) || 0;
-        bVal = Number(bVal) || 0;
-      }
-
-      if (typeof aVal === "string") aVal = aVal.toLowerCase();
-      if (typeof bVal === "string") bVal = bVal.toLowerCase();
-
-      if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
-      return 0;
-    });
-  }, [data, searchTerm, dateFilter, customStartDate, customEndDate, completedFilter, sortField, sortDirection]);
+  const totalPages = Math.ceil(totalCount / pageSize);
 
   const companyLogo = companySettings?.logo_url || localStorage.getItem('gate_pass_logo');
 
@@ -242,7 +228,10 @@ export default function GatePassRecords() {
             placeholder="Search GP No, Custom, Vehicle, Date..."
             className="pl-8 h-9"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+               setSearchTerm(e.target.value);
+               setPage(1); // Reset page on search
+            }}
           />
         </div>
 
@@ -250,7 +239,7 @@ export default function GatePassRecords() {
           <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Range:</span>
           <select
             value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
+            onChange={(e) => { setDateFilter(e.target.value); setPage(1); }}
             className="h-9 rounded-md border border-input bg-background/80 dark:bg-slate-950 px-2 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           >
             <option value="all">All Time</option>
@@ -265,7 +254,7 @@ export default function GatePassRecords() {
           <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Status:</span>
           <select
             value={completedFilter}
-            onChange={(e) => setCompletedFilter(e.target.value)}
+            onChange={(e) => { setCompletedFilter(e.target.value); setPage(1); }}
             className="h-9 rounded-md border border-input bg-background/80 dark:bg-slate-950 px-2 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           >
             {isAdmin ? (
@@ -316,6 +305,7 @@ export default function GatePassRecords() {
 
       <div className="border rounded-md bg-card w-full min-w-0 flex-1 overflow-auto">
         <Table className="min-w-[1000px]">
+          {/* ... table content remains unchanged, just checking indentation ... */}
           <TableHeader className="bg-slate-200 dark:bg-slate-800 sticky top-0 z-10 shadow-sm">
             <TableRow>
               <SortableTableHead label="Gate Pass No" field="gate_pass_no" currentSortField={sortField} currentSortDirection={sortDirection} onSort={handleSort} className="whitespace-nowrap" />
@@ -442,6 +432,32 @@ export default function GatePassRecords() {
           </TableBody>
         </Table>
       </div>
+      
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-2 py-2">
+          <div className="text-sm text-muted-foreground">
+            Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, totalCount)} of {totalCount} entries
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* View / Print Modal */}
       <Dialog open={!!viewingRecord} onOpenChange={(open) => !open && setViewingRecord(null)}>

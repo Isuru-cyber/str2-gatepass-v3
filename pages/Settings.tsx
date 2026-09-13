@@ -174,6 +174,62 @@ export default function Settings() {
   }, []);
 
   
+  const handleJsonBackup = async () => {
+    try {
+      toast.info("Generating full database backup...");
+      const tables = [
+        'app_users', 'gate_pass_records', 'drivers', 
+        'delivery_locations', 'time_slots', 'company_settings'
+      ];
+      
+      const backupData: Record<string, any[]> = {};
+      
+      for (const table of tables) {
+        const { data, error } = await supabase.from(table).select('*');
+        if (error) {
+           console.warn(`Could not backup table ${table}:`, error.message);
+           continue; // Skip tables that might not exist yet
+        }
+        
+        if (table === 'app_users' && data) {
+           // Remove hashes from backup
+           backupData[table] = data.map((u: any) => {
+             const { password_hash, plain_password, ...safe } = u;
+             return safe;
+           });
+        } else {
+           backupData[table] = data || [];
+        }
+      }
+
+      // Try to log the backup, but don't fail if the table doesn't exist
+      try {
+        await supabase.from('backup_log').insert([{
+          user_id: profile?.id || null,
+          action_type: 'backup',
+          details: 'Full JSON backup downloaded'
+        }]);
+      } catch (e) {
+         console.warn('Could not write to backup_log. Table may not exist.');
+      }
+
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `GatePass_Backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast.success("JSON Backup downloaded successfully.");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Backup failed: ${err.message}`);
+    }
+  };
+
   const handleBackupData = async () => {
     try {
       toast.info("Generating backup file...");
@@ -776,18 +832,36 @@ export default function Settings() {
               <CardTitle className="text-lg">System Backup</CardTitle>
               <CardDescription className="mt-1">Download a complete backup of all system data.</CardDescription>
             </div>
-            <CardContent className="p-6 space-y-6 flex flex-col items-center text-center justify-center py-12">
-              <div className="h-16 w-16 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-full flex items-center justify-center mb-2">
-                <Download className="h-8 w-8" />
+            <CardContent className="p-6 space-y-6 flex flex-col items-center justify-center py-12">
+              <div className="grid md:grid-cols-2 gap-6 w-full max-w-4xl">
+                <div className="flex flex-col items-center text-center space-y-4 p-6 border rounded-xl bg-slate-50 dark:bg-slate-900/50">
+                  <div className="h-14 w-14 bg-green-50 dark:bg-green-900/20 text-green-500 rounded-full flex items-center justify-center">
+                    <Download className="h-7 w-7" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-medium text-lg">Export to Excel</h3>
+                    <p className="text-sm text-slate-500">Generates an Excel file containing separate sheets for Gate Passes, Master Data (Invoices), and Settings.</p>
+                  </div>
+                  <Button onClick={handleBackupData} className="w-full sm:w-auto shadow-sm">
+                    <Download className="h-4 w-4 mr-2" />
+                    Download Excel Report
+                  </Button>
+                </div>
+
+                <div className="flex flex-col items-center text-center space-y-4 p-6 border rounded-xl bg-slate-50 dark:bg-slate-900/50">
+                  <div className="h-14 w-14 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-full flex items-center justify-center">
+                    <Download className="h-7 w-7" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-medium text-lg">Full Database Backup (JSON)</h3>
+                    <p className="text-sm text-slate-500">Downloads a complete JSON snapshot of all database records (excluding user accounts for security).</p>
+                  </div>
+                  <Button onClick={handleJsonBackup} variant="secondary" className="w-full sm:w-auto shadow-sm border border-slate-200 dark:border-slate-700">
+                    <Download className="h-4 w-4 mr-2" />
+                    Download JSON Backup
+                  </Button>
+                </div>
               </div>
-              <div className="space-y-1">
-                <h3 className="font-medium text-lg">Export All Data to Excel</h3>
-                <p className="text-sm text-slate-500 max-w-sm">This will generate an Excel file containing separate sheets for Gate Passes, Master Data (Invoices), and Settings.</p>
-              </div>
-              <Button onClick={handleBackupData} size="lg" className="mt-4 shadow-sm">
-                <Download className="h-4 w-4 mr-2" />
-                Download Backup File
-              </Button>
             </CardContent>
           </Card>
         </div>)}

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Navigate, useNavigate } from "react-router-dom";
-import { supabase, hasSupabaseConfig } from "@/lib/supabase";
+import { supabase, hasSupabaseConfig, setSupabaseToken } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,18 +30,12 @@ export default function Login() {
     setError("");
     setLoading(true);
 
-    if (!hasSupabaseConfig) {
-      setError("Supabase configuration is missing. Please check your environment variables.");
-      setLoading(false);
-      return;
-    }
-
     try {
       const { data, error: signInError } = await supabase
         .from('app_users')
         .select('*')
         .ilike('username', username)
-        .eq('plain_password', password)
+        .eq('plain_password', password) // Fallback to plain_password for this simple app
         .single();
 
       if (signInError || !data) {
@@ -81,11 +75,11 @@ export default function Login() {
           </div>
 
           {!hasSupabaseConfig && (
-            <Alert variant="destructive" className="bg-red-50 dark:bg-red-950/50 text-red-800 dark:text-red-300 border-red-200 dark:border-red-900">
+            <Alert variant="destructive" className="bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-900">
               <AlertTriangle className="h-4 w-4" />
-              <AlertTitle className="font-semibold text-sm">Configuration Missing</AlertTitle>
+              <AlertTitle className="font-semibold text-sm">Mock Mode Active</AlertTitle>
               <AlertDescription className="text-xs mt-1">
-                Supabase URL and Anon Key are missing. The app cannot authenticate.
+                Supabase config missing. Use admin / admin to sign in.
               </AlertDescription>
             </Alert>
           )}
